@@ -17,6 +17,19 @@
         "microsoft/microsoft-graph": "^2.0",
         "facebook/graph-sdk": "~5.0"
     },
+    "repositories": [
+        {
+            "type":"package",
+            "package": {
+              "name": "gregwar/captcha",
+              "version":"1.2.1",
+              "dist": {
+                  "url": "https://github.com/effgarces/Captcha/archive/refs/heads/master.zip",
+                  "type": "zip"
+                }
+            }
+        }
+    ],
     "scripts": {
         "install-tools": "phive install --trust-gpg-keys",
         "build": "./tools/phing",

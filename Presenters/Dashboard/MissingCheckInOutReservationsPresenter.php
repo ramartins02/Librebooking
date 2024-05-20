@@ -2,10 +2,9 @@
 
 require_once(ROOT_DIR . 'Controls/Dashboard/PastReservations.php');
 
-class PastReservationsPresenter
-{
+class MissingCheckInOutReservationsPresenter {
     /**
-     * @var IPastReservationsControl
+     * @var IRemainingPastReservationsControl
      */
     private $control;
 
@@ -24,7 +23,7 @@ class PastReservationsPresenter
      */
     private $searchUserLevel = ReservationUserLevel::ALL;
 
-    public function __construct(IPastReservationsControl $control, IReservationViewRepository $repository)
+    public function __construct(IRemainingPastReservationsControl $control, IReservationViewRepository $repository)
     {
         $this->control = $control;
         $this->repository = $repository;
@@ -46,39 +45,44 @@ class PastReservationsPresenter
         $dayOfWeek = $today->Weekday();
 
         $firstDate = $now->AddDays(-13+(6-$dayOfWeek)+1);
-        $consolidated = $this->repository->GetReservations($firstDate, $now, $this->searchUserId, $this->searchUserLevel, null, null, true);
         $yesterday = $today->AddDays(-1);
 
         $startOfPreviousWeek = $today->AddDays(-(7+$dayOfWeek));
+
+        $consolidated = [];
+
+        //All the missing check out reservations should show, therefore those that don't fit the two week time period get sent to the "Other" section represented by this array        
+        $remaining = [];
+
+        if (ServiceLocator::GetServer()->GetUserSession()->IsAdmin){
+            $consolidated = $this->repository->GetReservationsMissingCheckInCheckOut($firstDate, $now, $this->searchUserId, $this->searchUserLevel, null, null, true);
+            $remaining = $this->repository->GetReservationsMissingCheckInCheckOut(null, $firstDate, $this->searchUserId, $this->searchUserLevel, null, null, true);
+        }
+
+        else if (ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin || ServiceLocator::GetServer()->GetUserSession()->IsScheduleAdmin){
+            $resourceIds = $this->GetUserAdminResources($user->UserId);
+
+            if($resourceIds != null){
+                $consolidated = $this->repository->GetReservationsMissingCheckInCheckOut($firstDate, $now, $this->searchUserId, $this->searchUserLevel, null, $resourceIds, true);
+                $remaining = $this->repository->GetReservationsMissingCheckInCheckOut(null, $firstDate, $this->searchUserId, $this->searchUserLevel, null, $resourceIds, true);
+            }
+        }
 
         $todays = [];
         $yesterdays = [];
         $thisWeeks = [];
         $previousWeeks = [];
 
-        //TimeLessThan($now->ToTimezone($timezone)->GetTime()) -> only when the reservations end does it display 
-        //                                                       (so the reservation doesn't repeat here and in upcoming reservation)
-        //!$start->DateEquals($today) -> today is always GreaterThan($startOfPreviousWeek->AddDays(7)) so if a reservation hasn't ended it won't appear on ($todays)
-        //                              but it also can't show in any other section (can't just use an else) 
         foreach ($consolidated as $reservation) {
             $start = $reservation->EndDate->ToTimezone($timezone);
 
-            //The reservation gets taken out of the array if it's still ocurring so it doesn't affect the number of reservations in the displayer
-            //Ex: if we have one single past reservation that is happening it won't show on the display but next to the title it will still show 1 
-            //(number of reservations in consolidated) and it won't show the message "You have no past reservations"
-            //By doing this we solve the issue
             if ($start->DateEquals($today)) {
-                if (!$start->TimeLessThan($now->ToTimezone($timezone)->GetTime())){
-                    $remove = array_search($reservation, $consolidated);
-                    unset($consolidated[$remove]);
-                } else {
-                    $todays[] = $reservation;
-                }
+                $todays[] = $reservation;
             } elseif ($start->DateEquals($yesterday)) {
                 $yesterdays[] = $reservation;
-            } elseif ($start->GreaterThan($startOfPreviousWeek->AddDays(7)) && !$start->DateEquals($today)) {
+            } elseif ($start->GreaterThan($startOfPreviousWeek->AddDays(7))) {
                 $thisWeeks[] = $reservation;
-            } else if  (!$start->DateEquals($today)){
+            } else {
                 $previousWeeks[] = $reservation;
             }
         }
@@ -88,8 +92,8 @@ class PastReservationsPresenter
 
         $allowCheckin = $user->IsAdmin || !$checkinAdminOnly;
         $allowCheckout = $user->IsAdmin || !$checkoutAdminOnly;
-
-        $this->control->SetTotal(count($consolidated));
+        
+        $this->control->SetTotal(count($consolidated) + count($remaining));
         $this->control->SetTimezone($timezone);
         $this->control->SetUserId($user->UserId);
 
@@ -100,5 +104,25 @@ class PastReservationsPresenter
         $this->control->BindYesterday($yesterdays);
         $this->control->BindThisWeek($thisWeeks);
         $this->control->BindPreviousWeek($previousWeeks);
+        $this->control->BindRemaining($remaining);
+    }
+
+    /**
+     * Gets the resource ids that are under the responsability of the given resource user groups
+     */
+    private function GetUserAdminResources($userId){
+        $resourceIds = [];
+
+        $resourceRepo = new ResourceRepository();
+
+        if (ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin){    
+            $resourceIds = $resourceRepo->GetResourceAdminResourceIds($userId);
+        }
+
+        if (ServiceLocator::GetServer()->GetUserSession()->IsScheduleAdmin){
+            $resourceIds = $resourceRepo->GetScheduleAdminResourceIds($userId, $resourceIds);
+        }
+
+        return $resourceIds;
     }
 }

@@ -251,7 +251,6 @@ class LoginPresenter
     public function GetMicrosoftUrl(){
         if(Configuration::Instance()->GetSectionKey(ConfigSection::AUTHENTICATION, ConfigKeys::AUTHENTICATION_ALLOW_MICROSOFT, new BooleanConverter())){
             $MicrosoftUrl = 'https://login.microsoftonline.com/'
-
                             .urlencode(Configuration::Instance()->GetSectionKey(ConfigSection::AUTHENTICATION, ConfigKeys::MICROSOFT_TENANT_ID))
                             .'/oauth2/v2.0/authorize?'
                             .'client_id=' . urlencode(Configuration::Instance()->GetSectionKey(ConfigSection::AUTHENTICATION, ConfigKeys::MICROSOFT_CLIENT_ID))

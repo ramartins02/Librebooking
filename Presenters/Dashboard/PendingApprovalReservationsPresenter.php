@@ -1,11 +1,11 @@
 <?php
 
-require_once(ROOT_DIR . 'Controls/Dashboard/PendingApprovalReservations.php');
+require_once(ROOT_DIR . 'Controls/Dashboard/UpcomingReservations.php');
 
 class PendingApprovalReservationsPresenter
 {
     /**
-     * @var IPendingApprovalReservationsControl
+     * @var IAditionalUpcomingReservationsFieldsControl
      */
     private $control;
 
@@ -24,7 +24,7 @@ class PendingApprovalReservationsPresenter
      */
     private $searchUserLevel = ReservationUserLevel::ALL;
 
-    public function __construct(IPendingApprovalReservationsControl $control, IReservationViewRepository $repository)
+    public function __construct(IAditionalUpcomingReservationsFieldsControl $control, IReservationViewRepository $repository)
     {
         $this->control = $control;
         $this->repository = $repository;
@@ -53,97 +53,84 @@ class PendingApprovalReservationsPresenter
             $consolidated = $this->repository->GetReservationsPendingApproval($now, $this->searchUserId, $this->searchUserLevel, null, null,true);
         }
 
-        else if (ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin){
-            $groupResourceIds = $this->GetUserAdminResources();
+        elseif (ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin){
+            $groupResourceIds = $this->GetUserAdminResources($user->UserId);
             
             if($groupResourceIds != null){
-                $consolidated = array_merge($consolidated, $this->repository->GetReservationsPendingApproval($now, $this->searchUserId, $this->searchUserLevel, null, $groupResourceIds,true));
+                $consolidated = $this->repository->GetReservationsPendingApproval($now, $this->searchUserId, $this->searchUserLevel, null, $groupResourceIds,true);
             }
         }
 
         $tomorrow = $today->AddDays(1);
         $startOfNextWeek = $today->AddDays(7-$dayOfWeek);
+        $endOfNextWeek = $startOfNextWeek->AddDays(7);
 
         $todays = [];
         $tomorrows = [];
         $thisWeeks = [];
+        $nextWeeks = [];
         $thisMonths = [];
         $thisYears = [];
         $futures = [];
 
-        if ($consolidated != null){
-            foreach ($consolidated as $reservation) {
-                $start = $reservation->StartDate->ToTimezone($timezone);
-                
-                if ($start->DateEquals($today)) {
-                    $todays[] = $reservation;
-                } elseif ($start->DateEquals($tomorrow)) {
-                    $tomorrows[] = $reservation;
-                } elseif ($start->LessThan($startOfNextWeek)) {
-                    $thisWeeks[] = $reservation;
-                } elseif ($start->LessThan($endOfMonth)) {
-                    $thisMonths[] = $reservation;
-                } elseif ($start->LessThan($endOfYear)){
-                    $thisYears[] = $reservation;
-                } else{
-                    $futures[] = $reservation;
-                }
+        foreach ($consolidated as $reservation) {
+            $start = $reservation->StartDate->ToTimezone($timezone);
+            
+            if ($start->DateEquals($today)) {
+                $todays[] = $reservation;
+            } elseif ($start->DateEquals($tomorrow)) {
+                $tomorrows[] = $reservation;
+            } elseif ($start->LessThan($startOfNextWeek)) {
+                $thisWeeks[] = $reservation;
+            } elseif ($start->LessThan($endOfNextWeek)) {
+                $nextWeeks[] = $reservation;
+            }elseif ($start->LessThan($endOfMonth)) {
+                $thisMonths[] = $reservation;
+            } elseif ($start->LessThan($endOfYear)){
+                $thisYears[] = $reservation;
+            } else {
+                $futures[] = $reservation;
             }
-
-            $checkinAdminOnly = Configuration::Instance()->GetSectionKey(ConfigSection::RESERVATION, ConfigKeys::RESERVATION_CHECKIN_ADMIN_ONLY, new BooleanConverter());
-            $checkoutAdminOnly = Configuration::Instance()->GetSectionKey(ConfigSection::RESERVATION, ConfigKeys::RESERVATION_CHECKOUT_ADMIN_ONLY, new BooleanConverter());
-
-            $allowCheckin = $user->IsAdmin || !$checkinAdminOnly;
-            $allowCheckout = $user->IsAdmin || !$checkoutAdminOnly;
-
-            $this->control->SetTotal(count($consolidated));
-            $this->control->SetTimezone($timezone);
-            $this->control->SetUserId($user->UserId);
-
-            $this->control->SetAllowCheckin($allowCheckin);
-            $this->control->SetAllowCheckout($allowCheckout);
-
-            $this->control->BindToday($todays);
-            $this->control->BindTomorrow($tomorrows);
-            $this->control->BindThisWeek($thisWeeks);
-            $this->control->BindThisMonth($thisMonths);
-            $this->control->BindThisYear($thisYears);
-            $this->control->BindRemaining($futures);
         }
+
+        $checkinAdminOnly = Configuration::Instance()->GetSectionKey(ConfigSection::RESERVATION, ConfigKeys::RESERVATION_CHECKIN_ADMIN_ONLY, new BooleanConverter());
+        $checkoutAdminOnly = Configuration::Instance()->GetSectionKey(ConfigSection::RESERVATION, ConfigKeys::RESERVATION_CHECKOUT_ADMIN_ONLY, new BooleanConverter());
+
+        $allowCheckin = $user->IsAdmin || !$checkinAdminOnly;
+        $allowCheckout = $user->IsAdmin || !$checkoutAdminOnly;
+
+        $this->control->SetTotal(count($consolidated));
+        $this->control->SetTimezone($timezone);
+        $this->control->SetUserId($user->UserId);
+
+        $this->control->SetAllowCheckin($allowCheckin);
+        $this->control->SetAllowCheckout($allowCheckout);
+
+        $this->control->BindToday($todays);
+        $this->control->BindTomorrow($tomorrows);
+        $this->control->BindThisWeek($thisWeeks);
+        $this->control->BindNextWeek($nextWeeks);
+        $this->control->BindThisMonth($thisMonths);
+        $this->control->BindThisYear($thisYears);
+        $this->control->BindRemaining($futures);
     }
 
     /**
-     * Gets the resources of which the groups of the user are in charge of
+     * Gets the resource ids that are under the responsability of the given resource user groups
      */
-    private function GetUserAdminResources(){
+    private function GetUserAdminResources($userId){
         $resourceIds = [];
 
-        $command = new GetResourceAdminResourcesCommand(ServiceLocator::GetServer()->GetUserSession()->UserId);
-        $reader = ServiceLocator::GetDatabase()->Query($command);
+        $resourceRepo = new ResourceRepository();
 
-        while ($row = $reader->GetRow()) {
-            $resourceId = $row[ColumnNames::RESOURCE_ID];
-
-            if (!array_key_exists($resourceId, $resourceIds)) {
-                $resourceIds[$resourceId] = $resourceId;
-            } 
+        if (ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin){    
+            $resourceIds = $resourceRepo->GetResourceAdminResourceIds($userId);
         }
-        $reader->Free();
 
         //If a given reservation is pending approval a user who is only a schedule admin can't approve them, only a resource admin that manages the resource of that same reservation
         //However if this schedule admin is a resource admin (even if he does not manage the resource) and that resource is in the schedule he can approve (or reject)
         if (ServiceLocator::GetServer()->GetUserSession()->IsScheduleAdmin && ServiceLocator::GetServer()->GetUserSession()->IsResourceAdmin){
-            $command = new GetScheduleAdminResourcesCommand(ServiceLocator::GetServer()->GetUserSession()->UserId);
-            $reader = ServiceLocator::GetDatabase()->Query($command);
-
-            while ($row = $reader->GetRow()) {
-                $resourceId = $row[ColumnNames::RESOURCE_ID];
-
-                if (!array_key_exists($resourceId, $resourceIds)) {
-                    $resourceIds[$resourceId] = $resourceId;
-                } 
-            }
-            $reader->Free();
+            $resourceIds = $resourceRepo->GetScheduleAdminResourceIds($userId, $resourceIds);
         }
 
         return $resourceIds;
